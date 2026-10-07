@@ -1,0 +1,22 @@
+{
+  "target": "C:/Users/케이지에프앤비/Desktop/업무자료/☆영업채널/B2B/32. 이마트24/냉장 닭가슴살/재고관리_이마트24_26년(신제품 추가).xlsx",
+  "sheet": "DB",
+  "runtime": "runtime",
+  "credential_name": "Emart24/CJLogistics",
+  "start": "10:30",
+  "deadline": "11:00",
+  "retry_seconds": 300,
+  "source_headers": ["고객사코드", "점포코드", "점포(센터)", "발주구분", "센터입고예정일", "분류명", "상품코드", "상품명", "단위", "입수", "면과세구분", "수량", "낱개수량", "금액", "횟차"],
+  "site": {
+    "url": "https://sv.cjlogistics.com/",
+    "channel": "msedge",
+    "headless": true,
+    "login_frame": "topFrame",
+    "username": "#userId",
+    "password": "#passwd",
+    "menu": "TASA 전송리스트",
+    "next_text": "다음",
+    "max_pages": 1000,
+    "timeout_ms": 30000
+  }
+}
