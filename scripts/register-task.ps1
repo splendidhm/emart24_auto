@@ -9,7 +9,8 @@ try {
     & $python -m emart24 --config $cfgPath check-ready
     if ($LASTEXITCODE -ne 0) { throw 'Complete site verification and one validated production import before registration.' }
     # Use exactly the same resolved configuration as manual and scheduled runs.
-    $configOutput = & $python -m emart24 --config $cfgPath show-config
+    # ASCII JSON avoids Windows PowerShell 5.1 native UTF-8/code-page mismatch.
+    $configOutput = & $python -m emart24 --config $cfgPath show-config --ascii
     if ($LASTEXITCODE -ne 0) { throw 'Configuration could not be loaded.' }
     $cfg = ($configOutput -join "`n") | ConvertFrom-Json
 } finally { Pop-Location }

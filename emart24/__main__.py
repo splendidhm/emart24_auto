@@ -25,7 +25,8 @@ def main():
     run.add_argument("--notify", action="store_true")
     sub.add_parser("credentials")
     sub.add_parser("check-ready")
-    sub.add_parser("show-config")
+    show_config = sub.add_parser("show-config")
+    show_config.add_argument("--ascii", action="store_true", help="PowerShell 연동용 ASCII JSON 출력")
     configure = sub.add_parser("configure", help="PC별 대상 파일 폴더 설정")
     configure.add_argument("--target-dir", help="고정 파일명이 있는 폴더. 생략하면 폴더 선택 창 표시")
     verify = sub.add_parser("verify-site")
@@ -53,7 +54,7 @@ def main():
         print(f"설정 오류: {exc}", file=sys.stderr)
         return 2
     if args.command == "show-config":
-        print(json.dumps(cfg, ensure_ascii=False, indent=2))
+        print(json.dumps(cfg, ensure_ascii=args.ascii, indent=2))
         return 0
     runtime = Path(cfg["runtime"])
     runtime.mkdir(parents=True, exist_ok=True)
