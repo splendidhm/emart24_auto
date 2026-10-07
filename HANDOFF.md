@@ -4,6 +4,8 @@
 
 ## 현재 상태
 
+추가 변경: 다른 Windows PC를 위한 전역 대상 경로 설정을 구현했다. `configure-target.cmd`로 폴더만 선택하며 파일명은 `core.TARGET_FILENAME`에 고정된다. PC별 `config.local.json`은 Git 제외이며 수동·미리보기·예약 실행 모두 같은 경로 해석기를 사용한다. 경로 변경 시 사이트 검증을 다시 수행해야 한다. 현재 PC는 기존 대상 폴더로 설정을 이관한다.
+
 **프로토타입 코드·운영 문서 구현 및 로컬 Excel 파일 처리 검증 완료. 실제 사이트 로그인 이후 연동 검증과 정기 실행 활성화는 미완료.**
 
 - 저장소: https://github.com/splendidhm/emart24_auto.git
@@ -52,7 +54,7 @@ Python 3.12 환경에 Playwright 1.63.0, pywin32 312, openpyxl 3.1.5를 사용�
 
 ## 다음 담당자가 이어서 할 일
 
-1. `AGENTS.md`, 본 문서, `docs/architecture.md`를 읽는다. 로그인 정보 등록 여부는 현재 사용자 Windows 세션에서 확인한다. 이전 작업 시 미등록이었으며 이후 등록됐다고 가정하지 않는다.
+1. `AGENTS.md`, 본 문서, `docs/architecture.md`를 읽는다. 새 PC에서는 설치 후 `configure-target.cmd`로 대상 폴더를 먼저 선택한다. 로그인 정보 등록 여부는 현재 사용자 Windows 세션에서 확인한다. 이전 작업 시 미등록이었으며 이후 등록됐다고 가정하지 않는다.
 2. 사용자에게 `register-credentials.cmd`를 실행해 로컬 창에 ID/비밀번호를 입력하도록 안내한다. 자격 증명 이름은 `Emart24/CJLogistics`다. 채팅·커맨드 인수·설정 파일에 비밀번호를 넣지 않는다.
 3. 실제 존재하는 날짜로 `verify-site`를 실행한다. 현재 로그인 프레임 `topFrame`, 입력 필드 `#userId`, `#passwd`, Login 버튼까지만 실제 화면 확인을 마쳤다.
 4. 인증 이후 목록 DOM과 페이지 탐색, 제목 클릭 다운로드를 검증하고 필요하면 `site.py`를 조정한다. 현재 어댑터는 첨부 화면의 9개 열 순서(등록일 index 8)와 HTML 테이블을 가정한다. ActiveX 전용 화면이면 별도 대응이 필요하다.
@@ -62,6 +64,8 @@ Python 3.12 환경에 Playwright 1.63.0, pywin32 312, openpyxl 3.1.5를 사용�
 
 ```powershell
 # 프로젝트 폴더에서 실행
+.\.venv\Scripts\python.exe -m emart24 configure
+.\.venv\Scripts\python.exe -m emart24 show-config
 .\.venv\Scripts\python.exe -m emart24 credentials
 .\.venv\Scripts\python.exe -m emart24 verify-site --date 2026-10-06
 .\.venv\Scripts\python.exe -m emart24 run --date 2026-10-06 --dry-run

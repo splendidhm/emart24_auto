@@ -8,14 +8,14 @@ import time
 from datetime import date, datetime, time as daytime
 from pathlib import Path
 
-from .core import KST, Retryable, StopRun, file_hash, load_config, now_kst, within_window
+from .core import DEFAULT_CONFIG, TARGET_FILENAME, KST, Retryable, StopRun, config_hash, load_config, now_kst, save_target_directory, within_window
 from .importer import import_file
 from .windows import notify, run_lock, set_credential
 
 
 def main():
     parser = argparse.ArgumentParser(description="이마트24 주문 자동 적재")
-    parser.add_argument("--config", default="config.json")
+    parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run")
     run.add_argument("--date", type=date.fromisoformat)
@@ -25,10 +25,36 @@ def main():
     run.add_argument("--notify", action="store_true")
     sub.add_parser("credentials")
     sub.add_parser("check-ready")
+    sub.add_parser("show-config")
+    configure = sub.add_parser("configure", help="PC별 대상 파일 폴더 설정")
+    configure.add_argument("--target-dir", help="고정 파일명이 있는 폴더. 생략하면 폴더 선택 창 표시")
     verify = sub.add_parser("verify-site")
     verify.add_argument("--date", type=date.fromisoformat, default=now_kst().date())
     args = parser.parse_args()
-    cfg = load_config(args.config)
+    try:
+        if args.command == "configure":
+            folder = args.target_dir
+            if folder is None:
+                import tkinter as tk
+                from tkinter import filedialog
+                root = tk.Tk()
+                root.withdraw()
+                try:
+                    folder = filedialog.askdirectory(title=f"{TARGET_FILENAME} 파일이 있는 폴더 선택", mustexist=True)
+                finally:
+                    root.destroy()
+                if not folder:
+                    print("폴더 설정을 취소했습니다. 기존 설정은 유지됩니다.")
+                    return 0
+            print(f"대상 파일 설정 완료: {save_target_directory(args.config, folder)}")
+            return 0
+        cfg = load_config(args.config)
+    except (StopRun, OSError, ValueError) as exc:
+        print(f"설정 오류: {exc}", file=sys.stderr)
+        return 2
+    if args.command == "show-config":
+        print(json.dumps(cfg, ensure_ascii=False, indent=2))
+        return 0
     runtime = Path(cfg["runtime"])
     runtime.mkdir(parents=True, exist_ok=True)
     logging.basicConfig(filename=runtime / "events.log", level=logging.INFO,
@@ -43,7 +69,7 @@ def main():
             print("사이트 연결 검증이 필요합니다.", file=sys.stderr)
             return 2
         stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
-        if stamp["config_hash"] != file_hash(args.config):
+        if stamp["config_hash"] != config_hash(cfg):
             print("설정 변경 후 사이트 검증이 필요합니다.", file=sys.stderr)
             return 2
         ledger = Ledger(runtime / "history.sqlite3", readonly=True)
@@ -63,6 +89,8 @@ def main():
     day = getattr(args, "date", None) or now_kst().date()
     deadline = datetime.combine(day, daytime.fromisoformat(cfg["deadline"]), KST)
     try:
+        if not Path(cfg["target"]).is_file():
+            raise StopRun(f"설정한 대상 파일이 없습니다: {cfg['target']}")
         with run_lock(runtime / "run.lock"):
             if scheduled and not within_window(now_kst(), cfg["start"], cfg["deadline"]):
                 print("예약 실행 시간 밖입니다. 적재하지 않았습니다.")
@@ -81,7 +109,7 @@ def main():
                     logging.info("result %s", json.dumps(result, ensure_ascii=False))
                     print(json.dumps(result, ensure_ascii=False, indent=2))
                     if args.command == "verify-site":
-                        stamp = {"verified_at": now_kst().isoformat(), "config_hash": file_hash(args.config),
+                        stamp = {"verified_at": now_kst().isoformat(), "config_hash": config_hash(cfg),
                                  "transfer": transfer, "result": result}
                         (runtime / "site_verified.json").write_text(json.dumps(stamp, ensure_ascii=False, indent=2), encoding="utf-8")
                     if scheduled or getattr(args, "notify", False):
