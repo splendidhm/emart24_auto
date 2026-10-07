@@ -85,11 +85,24 @@ def credential(name):
     return c["UserName"], blob.decode("utf-16-le") if isinstance(blob, bytes) else blob
 
 
+def save_credential(name, username, password):
+    import win32cred
+    if not username.strip() or not password:
+        raise StopRun("아이디와 비밀번호를 모두 입력해 주세요.")
+    try:
+        # pywin32 CredWrite accepts Unicode and performs the Windows encoding.
+        win32cred.CredWrite({"Type": win32cred.CRED_TYPE_GENERIC, "TargetName": name,
+            "UserName": username.strip(), "CredentialBlob": password,
+            "Persist": win32cred.CRED_PERSIST_LOCAL_MACHINE}, 0)
+    except Exception:
+        # Do not include API arguments or credential values in UI/log output.
+        raise StopRun("Windows 자격 증명 저장에 실패했습니다. 현재 Windows 로그인 상태를 확인하고 다시 시도해 주세요.") from None
+
+
 def set_credential(name):
     # A local GUI avoids passwords in chat, command history, or stdout.
     import tkinter as tk
     from tkinter import messagebox
-    import win32cred
     root = tk.Tk()
     root.title("이마트24 자동화 — CJ 로그인 정보 등록")
     root.geometry("470x210")
@@ -101,11 +114,11 @@ def set_credential(name):
     password = tk.Entry(root, show="●", width=42)
     password.pack()
     def save():
-        if not user.get().strip() or not password.get():
+        try:
+            save_credential(name, user.get(), password.get())
+        except StopRun as exc:
+            messagebox.showerror("등록 실패", str(exc), parent=root)
             return
-        win32cred.CredWrite({"Type": win32cred.CRED_TYPE_GENERIC, "TargetName": name,
-            "UserName": user.get().strip(), "CredentialBlob": password.get().encode("utf-16-le"),
-            "Persist": win32cred.CRED_PERSIST_LOCAL_MACHINE}, 0)
         password.delete(0, tk.END)
         messagebox.showinfo("등록 완료", "로그인 정보를 안전하게 저장했습니다.")
         root.destroy()

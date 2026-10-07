@@ -1,95 +1,139 @@
-# 이마트24 발주데이터 자동화 인수인계
+# 이마트24 자동화 인수인계
 
-작성일: 2026-10-07 (한국시간)
+갱신: 2026-10-07. 다른 PC 적용 예정일: 2026-10-08.
 
 ## 현재 상태
 
-추가 변경: 다른 Windows PC를 위한 전역 대상 경로 설정을 구현했다. `configure-target.cmd`로 폴더만 선택하며 파일명은 `core.TARGET_FILENAME`에 고정된다. PC별 `config.local.json`은 Git 제외이며 수동·미리보기·예약 실행 모두 같은 경로 해석기를 사용한다. 경로 변경 시 사이트 검증을 다시 수행해야 한다. 현재 PC는 기존 대상 폴더로 설정을 이관한다.
+- 저장소: https://github.com/splendidhm/emart24_auto.git / 배포 브랜치: `main`.
+- 실제 CJ 로그인, rMate 목록 157페이지·4,709건 대조, 최신 유효 전송번호 `2819177` 선택 및 다운로드를 확인했다. 제목은 상세 화면을 열며 **파일명 셀**을 클릭해야 다운로드된다.
+- 10월 7일 원본 70행을 **운영 파일 복사본** DB 39,932~40,001행에 적재했다. A~O 값, P~T 수식 참조·계산, 기존 26개 시트의 값·수식·숫자 표시 형식, 재실행 중복 방지가 통과했다. 운영 파일 해시는 동일했다.
+- 최종 `verify-site`는 다운로드·양식 검증·미리보기까지 성공했다(`would_append`, 70행). 단위 테스트 30개 통과. 상세 결과는 `docs/validation.md`.
+- 자격 증명 저장 시 bytes 전달 오류를 Unicode 문자열 전달로 수정했다. 실제 Windows 임시 시험값의 저장·읽기·삭제를 확인했다. 과거 10:30 점검의 인증 미등록 상태는 이후 해결됐다.
+- 10월 6일 73행은 운영 DB에 이미 존재해 이 PC에 `existing` 이력을 기록했다. **10월 7일 테스트는 운영 파일에 쓰지 않았으며, 현재 PC의 정기 작업도 등록하지 않았다.**
+- `.xls` 실파일 호환성, 다른 PC 설치 및 첫 예약 실행은 아직 별도 검증 대상이다.
 
-**프로토타입 코드·운영 문서 구현 및 로컬 Excel 파일 처리 검증 완료. 실제 사이트 로그인 이후 연동 검증과 정기 실행 활성화는 미완료.**
+## 1. 새 PC 설치
 
-- 저장소: https://github.com/splendidhm/emart24_auto.git
-- 전달 브랜치: `main`
-- 요청 커밋 메시지: `발주데이터 자동화 프로토`
-- 실행 환경: Windows 사용자 로그인 상태, Microsoft Excel 및 Edge 설치 필요.
-- 작업 폴더: `C:\Users\케이지에프앤비\Documents\ChatGPT\이마트24 매출 데이터 엑셀 자동화`
+Windows 사용자 로그인 환경에 Python 3.12(64비트), 데스크톱 Microsoft Excel, Microsoft Edge, Git을 준비한다. Excel은 직접 한 번 실행해 초기 설정을 마친다. Windows 시간대는 한국 표준시로 설정한다. 설치·자격 증명·예약 등록은 실제 운영할 동일한 Windows 계정에서 진행한다. Codex 설치나 상시 실행은 필요 없다.
 
-## 확정된 업무 규칙
-
-1. 평일 월~금 한국시간 10:30 시작. 공휴일도 실행하며, 자료 미등록·파일 사용 중 등 일시적 실패는 5분 간격으로 11:00까지 재시도한다.
-2. CJ대한통운 사이트 로그인 → 정보관리 → TASA 전송리스트로 이동한다.
-3. 제목의 월·일과 등록일이 처리 날짜에 해당하는 `OO월 OO일 7F 주문정보(7F 이마트24) 전송`을 찾는다. 입력 > 0, 오류 = 0 중 최신 등록 항목 한 건을 선택한다. 동시각이면 큰 전송번호가 우선이다.
-4. 다운로드 파일의 첫 표시 시트(샘플: `붙여넣기`)에서 A~O 2행부터 마지막 실제 데이터 행까지 읽는다.
-5. **열 위치 그대로 A→A … O→O 값만 적재한다. F/H를 교환하지 않는다.** 사용자가 위치 그대로 붙여넣기를 명시했다. 현재 첨부 파일 헤더는 F=분류명, H=상품명이며 설정도 해당 첨부 파일을 기준으로 한다. 향후 수정본 헤더를 받으면 기준 헤더만 검토한다.
-6. 대상 `DB`의 A~O 마지막 데이터 아래에 추가하고, 이전 행 서식을 유지하며 P~T 수식을 새 행까지 확장한다. U열과 기존 시트는 보존한다.
-7. 중복 전체 일치 시 건너뛰고 일부 중복·당일 수정본·처리 이력 불일치는 중단한다. 정상 원본의 반복 행은 삭제하지 않는다.
-
-정확한 대상 경로와 상세 규칙은 `config.json` 및 `AGENTS.md`에 있다. 대상 확장자는 `.xlsx`다.
-
-## 구현된 구성
-
-| 경로 | 역할 |
-|---|---|
-| `emart24/__main__.py` | CLI, 예약 시간 제한, 재시도, 로그, 등록 전 준비 검사 |
-| `emart24/site.py` | Playwright 로그인, HTML 전송목록·페이지 탐색, 다운로드 |
-| `emart24/core.py` | 날짜·제목 선택, 값 정규화, 지문, 중복 판단 |
-| `emart24/workbooks.py` | 원본 읽기·양식 검증, Excel COM 편집, 수식 검증 |
-| `emart24/importer.py`, `emart24/ledger.py` | 백업·저장·교체·SQLite 이력과 중단 복구 |
-| `emart24/windows.py` | 실행/파일 잠금, Windows 자격 증명, 파일 교체, PC 알림 |
-| `scripts/`, `register-credentials.cmd` | 환경 설치, 작업 스케줄러 등록, 알림, 로컬 로그인 정보 입력 |
-| `tests/` | 업무 규칙 단위 테스트, 실제 Excel 복사본 통합 테스트 |
-| `docs/architecture.md`, `docs/validation.md` | 설치·운영·복구 절차와 검증 결과 |
-
-Python 3.12 환경에 Playwright 1.63.0, pywin32 312, openpyxl 3.1.5를 사용했다. openpyxl은 읽기 전용이며 실제 저장은 Excel COM을 사용한다. 현재 `.venv`는 번들 Python의 패키지를 참조해 만들어졌으므로 다른 PC에는 복사하지 말고 `scripts/setup.ps1`로 다시 설치한다.
-
-## 검증 결과와 운영 파일 상태
-
-- 단위 테스트 **12개 통과**: 선택 규칙, 시간 경계, 반복 행, 코드 문자열, 목록 파싱, 수정본, 저장 전후 중단 복구, 미리보기 이력 무변경.
-- 실제 Excel 복사본에 시험용 **2행 적재 성공**. P~T 수식·계산, 문자열 앞자리 0과 수식 모양 문자열, 파일 잠금, 백업, 교체 실패 후 복구, 재실행 중복 방지 확인.
-- 기존 **26개 시트**의 기존 셀 값·수식·숫자 표시 형식 보존 확인. 모든 개체의 외관·외부 링크 갱신까지 검증한 것은 아니다.
-- 통합 테스트 중 운영 파일의 SHA-256이 그대로 유지됨을 확인했다.
-- 첨부 `7F_자동전환양식_ver_4_20261006 (2).xlsx`의 **73행은 이미 운영 DB에 존재**했다. 미리보기 및 실제 로컬 원본 실행이 `already_present`로 끝났다. 운영 파일에 추가/저장하지 않고 로컬 SQLite에 `existing` 이력만 기록했다.
-- 보고서: `runtime/validation/70b2f6cb87034082992c1930ebb0acd1/report.json` (로컬 전용, Git 제외).
-- Python 컴파일, PowerShell 구문 검사, Git 공백 오류 검사 통과.
-
-## 다음 담당자가 이어서 할 일
-
-1. `AGENTS.md`, 본 문서, `docs/architecture.md`를 읽는다. 새 PC에서는 설치 후 `configure-target.cmd`로 대상 폴더를 먼저 선택한다. 로그인 정보 등록 여부는 현재 사용자 Windows 세션에서 확인한다. 이전 작업 시 미등록이었으며 이후 등록됐다고 가정하지 않는다.
-2. 사용자에게 `register-credentials.cmd`를 실행해 로컬 창에 ID/비밀번호를 입력하도록 안내한다. 자격 증명 이름은 `Emart24/CJLogistics`다. 채팅·커맨드 인수·설정 파일에 비밀번호를 넣지 않는다.
-3. 실제 존재하는 날짜로 `verify-site`를 실행한다. 현재 로그인 프레임 `topFrame`, 입력 필드 `#userId`, `#passwd`, Login 버튼까지만 실제 화면 확인을 마쳤다.
-4. 인증 이후 목록 DOM과 페이지 탐색, 제목 클릭 다운로드를 검증하고 필요하면 `site.py`를 조정한다. 현재 어댑터는 첨부 화면의 9개 열 순서(등록일 index 8)와 HTML 테이블을 가정한다. ActiveX 전용 화면이면 별도 대응이 필요하다.
-5. `verify-site` 성공 후 필요 날짜를 미리보기하고 운영 실행한다. 이미 들어간 10월 6일 자료를 다시 추가하지 않는다. 다른 PC에서는 로컬 `runtime` 이력이 없으므로 기존 DB 중복 확인을 반드시 거친다.
-6. `check-ready` 통과 후 `scripts/register-task.ps1`로 `Emart24-CJ-DailyImport`를 등록한다. 등록 결과·다음 실행 시각·사용자 로그인 조건을 확인한다. 현재는 등록되지 않았다.
-7. 첫 예약 실행 결과를 확인하고 `docs/validation.md`와 본 문서를 갱신한다. 기능 변경 시 `AGENTS.md`, 아키텍처 문서, 관련 테스트도 같이 갱신한다.
+PowerShell에서 아래를 순서대로 실행한다. 사용자 문서 폴더에 새로 설치하는 예이며 같은 폴더가 이미 있으면 기존 설치 여부부터 확인한다. 명령 실패 시 다음 단계로 넘어가지 않는다.
 
 ```powershell
-# 프로젝트 폴더에서 실행
-.\.venv\Scripts\python.exe -m emart24 configure
-.\.venv\Scripts\python.exe -m emart24 show-config
-.\.venv\Scripts\python.exe -m emart24 credentials
-.\.venv\Scripts\python.exe -m emart24 verify-site --date 2026-10-06
-.\.venv\Scripts\python.exe -m emart24 run --date 2026-10-06 --dry-run
-.\.venv\Scripts\python.exe -m emart24 run --date 2026-10-06
-.\.venv\Scripts\python.exe -m emart24 check-ready
-.\scripts\register-task.ps1
-
-# 테스트
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe -m tests.integration_excel '원본 파일 절대 경로'
+Set-Location -LiteralPath ([Environment]::GetFolderPath('MyDocuments'))
+git clone --branch main https://github.com/splendidhm/emart24_auto.git emart24_auto
+Set-Location -LiteralPath '.\emart24_auto'
+$pythonPath = py -3.12 -c "import sys; print(sys.executable)"
+if ($LASTEXITCODE -ne 0) { throw 'Python 3.12 설치를 확인하세요.' }
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\scripts\setup.ps1' -Python $pythonPath
 ```
 
-위 날짜는 검증에 사용한 예시다. 과거 날짜 재실행은 명시적으로 선택하고 실제 일일 실행은 해당 일자를 사용한다. Excel 통합 테스트는 원본 샘플이 운영 DB에 이미 존재하는 상태를 전제로 한다.
+`py`가 없으면 Python 3.12의 실제 `python.exe` 경로를 `-Python`에 지정한다. 기존 PC의 `.venv`는 복사하지 않는다. `ExecutionPolicy Bypass`는 해당 PowerShell 실행에만 적용된다.
 
-## 발견한 제약과 주의점
+## 2. 대상 파일·로그인 설정
 
-- 일반 `os.replace`는 사용 중인 Windows 보호 핸들과 충돌했다. **`ReplaceFileW`를 사용하는 구현을 유지**한다. 테스트에서 보호 핸들을 유지한 교체를 확인했다.
-- Excel COM은 격리된 실행 환경에서 서버 시작 오류가 발생했다. 사용자 세션에서 실행한 복사본 테스트는 통과했다. 사용자의 기존 Excel 프로세스를 일괄 종료하지 않는다.
-- 첨부 원본에 잘못된 숨김 시트 관계가 있어 openpyxl 경고가 나타난다. 표시 시트 읽기는 통과했고 원본을 복구 저장하지 않았다.
-- `.xls` 읽기 경로는 구현됐지만 실제 `.xls` 샘플로 검증하지 않았다.
-- 로그인 이후 사이트 연동과 정기 운영이 완료됐다고 보고하지 않는다. PC 로그아웃/종료 상태의 무인 Office 실행은 지원하지 않는다.
-- `runtime/`에는 백업, 다운로드, SQLite, 로그, 시험 파일이 있다. 자동 삭제하지 않으며, 중단 이력은 파일 해시와 함께 검토한다.
-- Git에는 소스·설정·문서·테스트만 포함한다. `.venv`, `runtime`, Excel 파일, `config.local.json`, 비밀번호는 포함하지 않는다.
+최신 운영 통합문서를 새 PC의 업무 폴더에 준비한다. Excel 파일은 Git에 포함되지 않는다. 기존 PC에서 아직 반영하지 않은 주문이 있는지 확인한다. 고정 파일명은 `재고관리_이마트24_26년(신제품 추가).xlsx`, 시트는 `DB`다.
 
-## 인수인계 완료 기준
+```powershell
+.\configure-target.cmd
+.\.venv\Scripts\python.exe -m emart24 show-config
+.\register-credentials.cmd
+```
 
-실제 계정으로 다운로드 검증 → 운영 DB에 정확히 한 번 반영 또는 기적재 확인 → 예약 작업 등록 확인 → 첫 평일 예약 실행 확인까지 마쳐야 운영 활성화가 완료된다.
+첫 창에서 대상 파일이 있는 **폴더**를 선택하고 `show-config`의 최종 경로를 확인한다. 로그인 창에는 CJ 사이트 ID/비밀번호를 입력한다. Windows 자격 증명 이름은 `Emart24/CJLogistics`다. 비밀번호를 채팅·명령 인수·설정에 넣지 않는다.
+
+로컬 설정, 자격 증명, 사이트 검증, 예약 작업은 새 PC에서 다시 구성한다. 기존 PC의 검증 파일을 복사해 준비 검사를 우회하지 않는다. 기존 백업·이력은 기존 PC에 보존한다. 새 PC의 이력은 비어 있으므로 기존 DB 중복 검사를 반드시 거친다. 동일 업무의 예약은 **운영 PC 한 대에서만** 활성화한다.
+
+## 3. 사이트·복사본 검증과 운영 준비
+
+대상 Excel을 닫고 진행한다. 아래 날짜는 실제 자료가 있는 검증 예시다. 10월 8일 설치 시 당일 자료가 아직 없으면 10월 7일 자료로 설치 검증할 수 있다. 과거 주문의 실제 적재 필요 여부는 담당자가 확인한다.
+
+```powershell
+$checkDate = '2026-10-07'
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m emart24 verify-site --date $checkDate
+Get-ChildItem -LiteralPath (Join-Path 'runtime\downloads' $checkDate) -Recurse -File
+```
+
+성공한 `verify-site` 실행에서 다운로드한 파일의 전체 경로를 다음 명령에 입력한다. 같은 날짜의 실행 폴더가 여러 개면 해당 성공 실행의 파일인지 확인한다.
+
+```powershell
+$sourcePath = Read-Host '방금 검증에서 다운로드한 Excel 전체 경로'
+.\.venv\Scripts\python.exe -m tests.validate_download $sourcePath --date $checkDate
+```
+
+이 테스트는 `runtime/validation`에 운영 파일과 원본을 복사해 검사한다. 보고서의 `passed: true`를 확인한다. 이미 반영된 자료는 `append_exercised: false`이며 신규 적재를 시험한 것으로 간주하지 않는다.
+
+다음 명령은 **실제 운영 파일 처리**다. 복사본 검증 통과 후 해당 날짜·파일이 적재 대상임을 확인하고 실행한다. 전체가 이미 반영됐으면 `already_present`로 건너뛰며 일부 중복이나 수정본이면 중단한다. 중단을 우회하거나 이력을 삭제하지 않는다.
+
+```powershell
+.\.venv\Scripts\python.exe -m emart24 run --date $checkDate --source $sourcePath --dry-run
+.\.venv\Scripts\python.exe -m emart24 run --date $checkDate --source $sourcePath
+.\.venv\Scripts\python.exe -m emart24 check-ready
+```
+
+`--source`는 지정 파일을 사용하므로 날짜와 원본의 대응은 실행자가 확인한다. `check-ready`는 이 PC의 사이트 검증과 운영 처리 또는 기적재 이력이 있어야 통과한다. 폴더 설정 변경 후에는 사이트 검증부터 다시 진행한다.
+
+## 4. Windows 작업 스케줄러 등록
+
+프로젝트 폴더의 PowerShell에서 현재 사용자 계정으로 일반 실행한다.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File '.\scripts\register-task.ps1'
+Get-ScheduledTask -TaskName 'Emart24-CJ-DailyImport' | Select-Object TaskName,State
+Get-ScheduledTaskInfo -TaskName 'Emart24-CJ-DailyImport' | Select-Object LastRunTime,LastTaskResult,NextRunTime
+```
+
+오류가 있으면 해결한 뒤 다시 등록한다. 같은 이름의 기존 작업은 새 설정으로 갱신된다. 등록 후 예약 실행은 운영 파일에 실제로 적재한다.
+
+| 항목 | 등록 내용 |
+|---|---|
+| 이름 | `Emart24-CJ-DailyImport` |
+| 정기 실행 | 월~금 한국시간 10:30, 공휴일 포함 |
+| 추가 트리거 | 해당 사용자 로그인 시 놓친 실행 확인 |
+| 실행 사용자 | 현재 Windows 사용자, 로그인 상태에서만 실행 |
+| 동작 | 프로젝트 `.venv\Scripts\python.exe`로 `run --scheduled` |
+| 시간 | 예약 시작은 평일 10:30~11:00, 일시적 오류는 5분 간격 재시도 |
+| 중복 | 실행 중이면 새 인스턴스 무시 |
+| 실행 시간 제한 | 작업 스케줄러 설정상 최대 45분 |
+
+Windows 키+R → `taskschd.msc` → **작업 스케줄러 라이브러리** → 해당 작업 더블클릭. 일반 탭에서 사용자·로그온 조건, 트리거에서 평일 10:30·로그인 시, 동작에서 Python·프로젝트 경로, 조건에서 전원 설정을 확인한다.
+
+PC 전원·인터넷을 유지하고 로그인해 둔다. 화면 잠금은 로그아웃과 다르다. 등록 스크립트는 절전 깨우기를 설정하지 않으므로 실행 시간에는 절전 상태를 피한다. 노트북은 AC 전원 조건을 확인하고 전원을 연결한다. 대상 Excel은 닫아둔다. Codex·PowerShell 창은 닫아도 된다. 프로그램 폴더를 이동하면 가상환경과 예약 경로를 다시 구성한다.
+
+11시 이후 로그인하면 과거 날짜를 자동 소급하지 않는다. 작업의 **실행** 버튼도 시간 제한을 적용하므로 시간 밖에는 적재 없이 정상 종료할 수 있다. `LastTaskResult=0`만으로 적재 성공을 판단하지 않는다.
+
+## 5. 결과 확인·중지·복구
+
+```powershell
+Get-Content -LiteralPath '.\runtime\events.log' -Tail 40
+```
+
+- `committed`: 운영 파일 적재 완료. `already_present`: 기적재라 추가 없음.
+- `would_append`: 미리보기만 수행, 저장하지 않음. `ERROR`/`stopped`: 원인 확인 필요.
+- 첫 예약 실행 후 실행 시각·로그·DB 행·P~T 계산을 확인하고 `docs/validation.md`와 이 문서를 갱신한다.
+
+예약을 중지할 때:
+
+```powershell
+Disable-ScheduledTask -TaskName 'Emart24-CJ-DailyImport'
+```
+
+다시 자동 실행할 때:
+
+```powershell
+Enable-ScheduledTask -TaskName 'Emart24-CJ-DailyImport'
+```
+
+작업 우클릭 → 사용 안 함/사용으로도 전환한다. 사용 안 함은 미래 실행을 막으며 이미 실행 중인 작업을 취소하는 명령은 아니다. 시간 경과 후 수동 복구는 `run --date YYYY-MM-DD --dry-run`으로 확인한 뒤 `run --date YYYY-MM-DD`를 사용한다.
+
+복구는 예약 중지 → Excel 닫기 → 현재 파일 별도 보관 → 백업·SQLite 이력 대조 순서다. 백업·이력을 임의 삭제하거나 Excel 프로세스를 일괄 종료하지 않는다. `prepared` 이력은 파일 해시와 함께 검토한다.
+
+## 유지보수 기준
+
+업무 규칙은 `AGENTS.md`, 구조는 `docs/architecture.md`를 따른다. A~O 위치 그대로 복사하며 F/H를 교환하지 않는다. P~T 수식을 확장하고 U열·기존 행·다른 시트를 보존한다. 매크로·외부 링크 자동 갱신을 차단한다.
+
+백업 → 작업 사본 편집·검증 → `prepared` → `ReplaceFileW` 교체 → `committed` 순서다. 보호 핸들과 충돌하는 단순 `os.replace`로 변경하지 않는다.
+
+`runtime`에는 다운로드·로그·백업·SQLite·시험 파일이 있다. Git에 올리지 않는다. `.venv`, `config.local.json`, Excel 파일, 자격 증명도 제외한다. 70행 시험 보고서는 기존 PC의 `runtime/validation/2026-10-07-0bac0e39b2a748edb4f7cf751b8ade91/report.json`에 있다.
+
+완료 기준은 **새 PC에서 검증 → 운영 처리/기적재 확인 → 예약 등록 → 첫 평일 예약 실행 확인**이다. 기존 PC의 시험 성공을 새 PC의 운영 완료로 간주하지 않는다.
