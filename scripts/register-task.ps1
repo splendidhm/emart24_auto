@@ -1,4 +1,4 @@
-param([string]$Config = 'config.json')
+param([string]$Config = 'config.json', [datetime]$StartDate = (Get-Date).Date)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $cfgPath = if ([IO.Path]::IsPathRooted($Config)) { [IO.Path]::GetFullPath($Config) } else { [IO.Path]::GetFullPath((Join-Path $root $Config)) }
@@ -16,9 +16,16 @@ try {
 } finally { Pop-Location }
 if ((Get-TimeZone).Id -ne 'Korea Standard Time') { throw 'Windows time zone must be Korea Standard Time.' }
 $action = New-ScheduledTaskAction -Execute $python -Argument ('-m emart24 --config "' + $cfgPath + '" run --scheduled') -WorkingDirectory $root
-$daily = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At $cfg.start
+$startTime = [datetime]::ParseExact($cfg.start,'HH:mm',[Globalization.CultureInfo]::InvariantCulture)
+$endTime = [datetime]::ParseExact($cfg.deadline,'HH:mm',[Globalization.CultureInfo]::InvariantCulture)
+if ($endTime -lt $startTime -or [int]$cfg.retry_seconds -ne 300) { throw 'Invalid collection window.' }
+$daily = @()
+for ($slot = $startTime; $slot -le $endTime; $slot = $slot.AddMinutes(5)) {
+    $daily += New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday,Saturday -At ($StartDate.Date.Add($slot.TimeOfDay))
+}
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 $login = New-ScheduledTaskTrigger -AtLogOn -User $identity
+$login.StartBoundary = $StartDate.Date.ToString('yyyy-MM-ddTHH:mm:ss')
 $principal = New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 45)
-Register-ScheduledTask -TaskName 'Emart24-CJ-DailyImport' -Action $action -Trigger @($daily,$login) -Principal $principal -Settings $settings -Description 'CJ orders, weekdays 10:30 KST; retry until 11:00.' -Force
+Register-ScheduledTask -TaskName 'Emart24-CJ-DailyImport' -Action $action -Trigger @($daily + @($login)) -Principal $principal -Settings $settings -Description 'CJ orders, Mon-Sat every 5 minutes 10:40-11:10 KST; all valid transfers; ambiguous revisions require review.' -Force

@@ -38,9 +38,11 @@ class BusinessRules(unittest.TestCase):
         self.assertEqual(fingerprint([[1.0]]),fingerprint([[1]]))
 
     def test_schedule_boundaries_weekends_timezone(self):
-        for hour, minute, expected in [(10,29,False),(10,30,True),(11,0,True),(11,1,False)]:
+        for hour, minute, expected in [(10,39,False),(10,40,True),(11,10,True),(11,11,False)]:
             self.assertEqual(within_window(datetime(2026,10,7,hour,minute,tzinfo=KST)),expected)
-        self.assertFalse(within_window(datetime(2026,10,10,10,30,tzinfo=KST)))
+        self.assertTrue(within_window(datetime(2026,10,10,10,40,tzinfo=KST)))
+        self.assertTrue(within_window(datetime(2026,10,10,11,10,30,tzinfo=KST)))
+        self.assertFalse(within_window(datetime(2026,10,11,10,40,tzinfo=KST)))
 
     def test_parse_rendered_row(self):
         cells = ["2818194","10월 06일 7F 주문정보(7F 이마트24) 전송","주문정보","orders.xlsx","73","0","0","0","2026-10-06 10:29:41"]
@@ -68,8 +70,9 @@ class HistoryRules(unittest.TestCase):
     def test_repeat_and_revision(self):
         self.add()
         self.assertTrue(self.ledger.previous(self.target,"2026-10-06","124",fingerprint([[1]])))
+        self.assertFalse(self.ledger.previous(self.target,"2026-10-06","124",fingerprint([[2]])))
         with self.assertRaises(StopRun):
-            self.ledger.previous(self.target,"2026-10-06","124",fingerprint([[2]]))
+            self.ledger.previous(self.target,"2026-10-06","123",fingerprint([[2]]))
 
     def test_crash_before_replace_aborts(self):
         self.add("prepared", before_hash="old",after_hash="new",start_row=2,row_count=1)

@@ -72,7 +72,8 @@ class Ledger:
                     raise StopRun("같은 전송번호의 내용이 변경됐습니다. 확인이 필요합니다.")
                 return True
             if r["day"] == day:
-                if r["data_hash"] != digest:
+                if r["data_hash"] == digest:
+                    return True
+                if not transfer:
                     raise StopRun("이미 처리한 날짜의 수정본입니다. 자동 추가하지 않습니다.")
-                return True
         return False

@@ -3,8 +3,8 @@
   "sheet": "DB",
   "runtime": "runtime",
   "credential_name": "Emart24/CJLogistics",
-  "start": "10:30",
-  "deadline": "11:00",
+  "start": "10:40",
+  "deadline": "11:10",
   "retry_seconds": 300,
   "source_headers": ["고객사코드", "점포코드", "점포(센터)", "발주구분", "센터입고예정일", "분류명", "상품코드", "상품명", "단위", "입수", "면과세구분", "수량", "낱개수량", "금액", "횟차"],
   "site": {

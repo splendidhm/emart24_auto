@@ -8,7 +8,7 @@ import time
 from datetime import date, datetime, time as daytime
 from pathlib import Path
 
-from .core import DEFAULT_CONFIG, TARGET_FILENAME, KST, Retryable, StopRun, config_hash, load_config, now_kst, save_target_directory, within_window
+from .core import DEFAULT_CONFIG, TARGET_FILENAME, KST, Retryable, StopRun, config_hash, site_config_hash, site_verification_matches, load_config, now_kst, save_target_directory, within_window
 from .importer import import_file
 from .windows import notify, run_lock, set_credential
 
@@ -70,7 +70,7 @@ def main():
             print("사이트 연결 검증이 필요합니다.", file=sys.stderr)
             return 2
         stamp = json.loads(stamp_path.read_text(encoding="utf-8"))
-        if stamp["config_hash"] != config_hash(cfg):
+        if not site_verification_matches(cfg,stamp):
             print("설정 변경 후 사이트 검증이 필요합니다.", file=sys.stderr)
             return 2
         ledger = Ledger(runtime / "history.sqlite3", readonly=True)
@@ -100,28 +100,37 @@ def main():
                 try:
                     transfer = None
                     if args.command == "verify-site" or not args.source:
-                        from .site import fetch
-                        item, source = fetch(cfg, day)
-                        transfer = item.number
+                        from .site import fetch_all
+                        from .batches import process_batches
+                        batches = fetch_all(cfg, day)
                     else:
                         source = args.source
                     dry = args.command == "verify-site" or args.dry_run
-                    result = import_file(cfg, source, day, transfer, dry_run=dry)
+                    if args.command == "verify-site" or not args.source:
+                        result = process_batches(cfg,batches,day,dry_run=dry)
+                    else:
+                        result = import_file(cfg, source, day, transfer, dry_run=dry)
                     logging.info("result %s", json.dumps(result, ensure_ascii=False))
                     print(json.dumps(result, ensure_ascii=False, indent=2))
+                    if result.get('errors'):
+                        raise StopRun('일부 전송 처리에 확인이 필요합니다. 로그의 전송번호와 원인을 확인하세요.')
                     if args.command == "verify-site":
                         stamp = {"verified_at": now_kst().isoformat(), "config_hash": config_hash(cfg),
+                                 "site_config_hash":site_config_hash(cfg),
                                  "transfer": transfer, "result": result}
                         (runtime / "site_verified.json").write_text(json.dumps(stamp, ensure_ascii=False, indent=2), encoding="utf-8")
                     if scheduled or getattr(args, "notify", False):
-                        notify(f"{day}: {result['status']} ({result['rows']}행).")
+                        if 'results' in result:
+                            added=sum(r['rows'] for r in result['results'] if r['status']=='committed')
+                            notify(f"{day}: {len(result['results'])}건 확인, {added}행 추가.")
+                        else:
+                            notify(f"{day}: {result['status']} ({result['rows']}행).")
                     return 0
                 except Retryable as exc:
                     logging.warning("retryable %s", exc)
-                    if not scheduled or now_kst() >= deadline:
-                        raise
-                    delay = min(cfg["retry_seconds"], max(0, (deadline-now_kst()).total_seconds()))
-                    time.sleep(delay)
+                    # The next five-minute scheduler trigger retries, including
+                    # after success. Do not occupy subsequent scheduled slots.
+                    raise
     except StopRun as exc:
         logging.error("stopped %s", exc)
         print(str(exc), file=sys.stderr)

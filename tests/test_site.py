@@ -1,10 +1,18 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from emart24.site import advance, group_grid_cells, handle_login_dialog
+from emart24.site import advance, group_grid_cells, handle_login_dialog, checked_download_name
+from emart24.core import StopRun
 
 
 class LoginDialogs(unittest.TestCase):
+    def test_wrong_download_is_rejected(self):
+        with self.assertRaises(StopRun):
+            checked_download_name('orders_20261009.xlsx', 'orders_20260917.xlsx')
+
+    def test_matching_download_keeps_filename(self):
+        self.assertEqual(checked_download_name('주문.xlsx', '주문.xlsx'), '주문.xlsx')
+
     def test_page_scroll_reset_is_not_navigation(self):
         link = Mock()
         link.is_visible.return_value = True

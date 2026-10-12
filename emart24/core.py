@@ -87,18 +87,24 @@ class Transfer:
     registered: datetime
 
 
-def choose_transfer(items, day):
+def select_transfers(items, day):
+    """Return all successful batches, oldest first; latest need not be complete."""
     pattern = rf"0?{day.month}월0?{day.day}일7F주문정보\(7F이마트24\)전송"
     valid = [i for i in items if re.fullmatch(pattern, compact(i.title))
              and i.registered.date() == day and i.count > 0 and i.errors == 0]
+    return sorted(valid, key=lambda i: (i.registered, i.number))
+
+
+def choose_transfer(items, day):
+    valid = select_transfers(items, day)
     if not valid:
         raise Retryable("당일 최신 유효 주문 항목이 아직 없습니다.")
     return max(valid, key=lambda i: (i.registered, i.number))
 
 
-def within_window(now, start="10:30", deadline="11:00"):
+def within_window(now, start="10:40", deadline="11:10"):
     local = now.astimezone(KST)
-    return local.weekday() < 5 and time.fromisoformat(start) <= local.time().replace(tzinfo=None) <= time.fromisoformat(deadline)
+    return local.weekday() < 6 and time.fromisoformat(start) <= local.time().replace(tzinfo=None,second=0,microsecond=0) <= time.fromisoformat(deadline)
 
 
 def local_config_path(path):
@@ -137,6 +143,21 @@ def save_target_directory(path, directory):
 def config_hash(cfg):
     raw = json.dumps(cfg, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def site_config_hash(cfg):
+    return config_hash({k:v for k,v in cfg.items() if k not in ('start','deadline','retry_seconds')})
+
+
+def site_verification_matches(cfg, stamp):
+    if stamp.get('site_config_hash') == site_config_hash(cfg):
+        return True
+    if stamp.get('config_hash') == config_hash(cfg):
+        return True
+    # Migrate the previously verified original schedule only; every path,
+    # header, credential reference and site selector must still match exactly.
+    original=dict(cfg,start='10:30',deadline='11:00',retry_seconds=300)
+    return stamp.get('config_hash') == config_hash(original)
 
 
 def load_config(path=DEFAULT_CONFIG):

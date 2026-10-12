@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
-from .core import Retryable, StopRun, Transfer, choose_transfer, compact
+from .core import Retryable, StopRun, Transfer, choose_transfer, compact, select_transfers
 from .windows import credential
 
 
@@ -46,6 +46,15 @@ def visible_text(page, text):
 GRID_CELLS = ".rMateH5__DataGridBaseContentHolder > .rMateH5__DataGridItemRenderer, .rMateH5__DataGridBaseContentHolder > .rMateH5__HtmlItemRenderer"
 
 
+def checked_download_name(expected, suggested):
+    name = Path(suggested).name
+    if name != expected:
+        raise StopRun("선택한 항목과 다운로드 파일명이 다릅니다. 적재하지 않습니다.")
+    if Path(name).suffix.lower() not in (".xlsx", ".xlsm", ".xls"):
+        raise StopRun("다운로드가 Excel 파일 형식이 아닙니다.")
+    return name
+
+
 def group_grid_cells(cells):
     groups = {}
     for c in cells:
@@ -83,7 +92,13 @@ def _rows_on_page(page):
                 holder:e.parentElement.id, top:parseFloat(e.style.top),
                 left:parseFloat(e.style.left), text:e.innerText}))""")
             for record, index in group_grid_cells(cells):
-                result.append((record, grid.nth(index)))
+                # Virtual rows recycle DOM nodes: an ordinal locator can later
+                # point at a different file after scrolling or a rerender.
+                filename = re.compile(r"^\s*" + re.escape(record.filename) + r"\s*$")
+                source_cell = next(c for c in cells if c['index'] == index)
+                position = f'top: {source_cell["top"]:g}px;'
+                result.append((record, grid.filter(has_text=filename).and_(
+                    frame.locator(f'[style*="{position}"]'))))
             continue
         for row in frame.locator("tr").all():
             if not row.is_visible():
@@ -149,6 +164,10 @@ def advance(page, page_number, next_text, previous_ids=None):
 
 
 def fetch(cfg, day):
+    return fetch_all(cfg, day)[-1]
+
+
+def fetch_all(cfg, day):
     from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
     site = cfg["site"]
     user, password = credential(cfg["credential_name"])
@@ -221,51 +240,61 @@ def fetch(cfg, day):
                 if total is not None and len(all_records) != total:
                     raise StopRun("조회 건수와 탐색한 건수가 다릅니다. 페이지 탐색 검증이 필요합니다.")
                 logging.info("site scan complete pages=%s records=%s expected=%s", n, len(all_records), total)
-                selected = choose_transfer(list(all_records.values()), day)
-                logging.info("site selected transfer=%s date=%s input_count=%s", selected.number, day, selected.count)
-                # Reopen list, then locate exactly the selected transfer ID.
-                visible_text(page, site["menu"]).click()
-                page.wait_for_timeout(500)
-                selected_row = None
-                for n in range(1, site["max_pages"] + 1):
-                    scanned_ids = set()
-                    for batch in page_batches(page):
-                        scanned_ids.update(record.number for record, _ in batch)
-                        for record, row in batch:
-                            if record.number == selected.number:
-                                if record != selected:
-                                    raise Retryable("탐색 중 전송 항목이 변경됐습니다.")
-                                selected_row = row
+                selections = select_transfers(list(all_records.values()), day)
+                if not selections:
+                    raise Retryable("당일 유효 주문 항목이 아직 없습니다.")
+                results = []
+                for selected in selections:
+                    logging.info("site selected transfer=%s date=%s input_count=%s", selected.number, day, selected.count)
+                    # Reopen list, then locate exactly the selected transfer ID.
+                    visible_text(page, site["menu"]).click()
+                    page.wait_for_timeout(1200)
+                    selected_row = None
+                    for n in range(1, site["max_pages"] + 1):
+                        scanned_ids = set()
+                        for batch in page_batches(page):
+                            scanned_ids.update(record.number for record, _ in batch)
+                            for record, row in batch:
+                                if record.number == selected.number:
+                                    if record != selected:
+                                        raise Retryable("탐색 중 전송 항목이 변경됐습니다.")
+                                    selected_row = row
+                                    break
+                            if selected_row is not None:
                                 break
-                        if selected_row is not None:
+                        if selected_row is not None or not advance(page, n, site["next_text"], scanned_ids):
                             break
-                    if selected_row is not None or not advance(page, n, site["next_text"], scanned_ids):
-                        break
-                if selected_row is None:
-                    raise Retryable("선택한 전송 항목이 목록에서 변경됐습니다.")
-                downloads = []
-                def on_download(download):
-                    downloads.append(download)
-                page.on("download", on_download)
-                context.on("page", lambda popup: popup.on("download", on_download))
-                selected_row.click()
-                for _ in range(600):
-                    if downloads:
-                        break
-                    page.wait_for_timeout(100)
-                if not downloads:
-                    raise Retryable("파일명 클릭 후 다운로드가 시작되지 않았습니다.")
-                download = downloads[0]
-                if download.failure():
-                    raise Retryable("다운로드에 실패했습니다.")
-                name = Path(download.suggested_filename).name
-                if Path(name).suffix.lower() not in (".xlsx", ".xlsm", ".xls"):
-                    raise StopRun("다운로드가 Excel 파일 형식이 아닙니다.")
-                output = run_dir / name
-                download.save_as(output)
-                if output.stat().st_size == 0:
-                    raise Retryable("다운로드 파일이 비어 있습니다.")
-                return selected, output
+                    if selected_row is None:
+                        raise Retryable("선택한 전송 항목이 목록에서 변경됐습니다.")
+                    if selected_row.count() != 1 or selected_row.inner_text().strip() != selected.filename:
+                        raise StopRun("선택한 파일명 셀을 유일하게 확인할 수 없습니다.")
+                    downloads = []
+                    def on_download(download):
+                        downloads.append(download)
+                    page.on("download", on_download)
+                    def on_popup(popup):
+                        popup.on("download", on_download)
+                    context.on("page", on_popup)
+                    selected_row.click()
+                    for _ in range(600):
+                        if downloads:
+                            break
+                        page.wait_for_timeout(100)
+                    if not downloads:
+                        raise Retryable("파일명 클릭 후 다운로드가 시작되지 않았습니다.")
+                    download = downloads[0]
+                    if download.failure():
+                        raise Retryable("다운로드에 실패했습니다.")
+                    name = checked_download_name(selected.filename, download.suggested_filename)
+                    output = run_dir / str(selected.number) / name
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    download.save_as(output)
+                    if output.stat().st_size == 0:
+                        raise Retryable("다운로드 파일이 비어 있습니다.")
+                    page.remove_listener("download", on_download)
+                    context.remove_listener("page", on_popup)
+                    results.append((selected, output))
+                return results
             finally:
                 context.close()
                 browser.close()
